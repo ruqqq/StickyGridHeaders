@@ -16,30 +16,18 @@
 
 package com.tonicartos.widget.stickygridheaders;
 
-import com.tonicartos.widget.stickygridheaders.StickyGridHeadersBaseAdapterWrapper.HeaderFillerView;
-
-import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.util.ArrayList;
-import java.util.List;
-
 import android.content.Context;
 import android.database.DataSetObserver;
 import android.graphics.Canvas;
 import android.graphics.Rect;
 import android.os.Build;
-import android.os.Handler;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.util.AttributeSet;
-import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
-import android.view.SoundEffectConstants;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
-import android.view.accessibility.AccessibilityEvent;
 import android.widget.AbsListView;
 import android.widget.AbsListView.OnScrollListener;
 import android.widget.AdapterView;
@@ -48,6 +36,14 @@ import android.widget.AdapterView.OnItemLongClickListener;
 import android.widget.AdapterView.OnItemSelectedListener;
 import android.widget.GridView;
 import android.widget.ListAdapter;
+
+import com.tonicartos.widget.stickygridheaders.StickyGridHeadersBaseAdapterWrapper.HeaderFillerView;
+
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * GridView that displays items in sections with headers that stick to the top
@@ -95,10 +91,6 @@ public class StickyGridHeadersGridView extends GridView implements OnScrollListe
         return r;
     }
 
-    public CheckForHeaderLongPress mPendingCheckForLongPress;
-
-    public CheckForHeaderTap mPendingCheckForTap;
-
     private boolean mAreHeadersSticky = true;
 
     private final Rect mClippingRect = new Rect();
@@ -142,17 +134,11 @@ public class StickyGridHeadersGridView extends GridView implements OnScrollListe
 
     private int mNumMeasuredColumns = 1;
 
-    private OnHeaderClickListener mOnHeaderClickListener;
-
-    private OnHeaderLongClickListener mOnHeaderLongClickListener;
-
     private OnItemClickListener mOnItemClickListener;
 
     private OnItemLongClickListener mOnItemLongClickListener;
 
     private OnItemSelectedListener mOnItemSelectedListener;
-
-    private PerformHeaderClick mPerformHeaderClick;
 
     private OnScrollListener mScrollListener;
 
@@ -173,8 +159,6 @@ public class StickyGridHeadersGridView extends GridView implements OnScrollListe
     protected int mMotionHeaderPosition;
 
     protected int mTouchMode;
-
-    boolean mHeaderChildBeingPressed = false;
 
     public StickyGridHeadersGridView(Context context) {
         this(context, null);
@@ -299,179 +283,26 @@ public class StickyGridHeadersGridView extends GridView implements OnScrollListe
 
     @Override
     public boolean onTouchEvent(MotionEvent ev) {
-        final int action = ev.getAction();
-        boolean wasHeaderChildBeingPressed = mHeaderChildBeingPressed;
-        if (mHeaderChildBeingPressed) {
-            final View tempHeader = getHeaderAt(mMotionHeaderPosition);
-            final View headerHolder = mMotionHeaderPosition == MATCHED_STICKIED_HEADER ?
-                    tempHeader : getChildAt(mMotionHeaderPosition);
-            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
-                mHeaderChildBeingPressed = false;
-            }
+        final int action = ev.getAction() & MotionEvent.ACTION_MASK;
+
+        if (action == MotionEvent.ACTION_DOWN) {
+            final int y = (int) ev.getY();
+            mMotionHeaderPosition = findMotionHeader(y);
+        }
+
+        if (mMotionHeaderPosition != NO_MATCHED_HEADER) {
+            View tempHeader = getHeaderAt(mMotionHeaderPosition);
             if (tempHeader != null) {
                 tempHeader.dispatchTouchEvent(transformEvent(ev, mMotionHeaderPosition));
                 tempHeader.invalidate();
-                tempHeader.postDelayed(new Runnable() {
-                    public void run() {
-                        invalidate(0, headerHolder.getTop(), getWidth(), headerHolder.getTop()+headerHolder.getHeight());
-                    }
-                }, ViewConfiguration.getPressedStateDuration());
-                invalidate(0, headerHolder.getTop(), getWidth(), headerHolder.getTop()+headerHolder.getHeight());
             }
         }
 
-        switch (action & MotionEvent.ACTION_MASK) {
-            case MotionEvent.ACTION_DOWN:
-                if (mPendingCheckForTap == null) {
-                    mPendingCheckForTap = new CheckForHeaderTap();
-                }
-                postDelayed(mPendingCheckForTap, ViewConfiguration.getTapTimeout());
-
-                final int y = (int)ev.getY();
-                mMotionY = y;
-                mMotionHeaderPosition = findMotionHeader(y);
-                if (mMotionHeaderPosition == NO_MATCHED_HEADER
-                        || mScrollState == SCROLL_STATE_FLING) {
-                    // Don't consume the event and pass it to super because we
-                    // can't handle it yet.
-                    break;
-                } else {
-                    View tempHeader = getHeaderAt(mMotionHeaderPosition);
-                    if (tempHeader != null) {
-                        if (tempHeader.dispatchTouchEvent(transformEvent(ev, mMotionHeaderPosition))) {
-                            mHeaderChildBeingPressed = true;
-                            tempHeader.setPressed(true);
-                        }
-                        tempHeader.invalidate();
-                        if (mMotionHeaderPosition != MATCHED_STICKIED_HEADER) {
-                            tempHeader = getChildAt(mMotionHeaderPosition);
-                        }
-                        invalidate(0, tempHeader.getTop(), getWidth(), tempHeader.getTop()+tempHeader.getHeight());
-                    }
-                }
-                mTouchMode = TOUCH_MODE_DOWN;
-                return true;
-            case MotionEvent.ACTION_MOVE:
-                if (mMotionHeaderPosition != NO_MATCHED_HEADER
-                        && Math.abs(ev.getY() - mMotionY) > mTouchSlop) {
-                    // Detected scroll initiation so cancel touch completion on
-                    // header.
-                    mTouchMode = TOUCH_MODE_REST;
-                    // if (!mHeaderChildBeingPressed) {
-                    final View header = getHeaderAt(mMotionHeaderPosition);
-                    if (header != null) {
-                        header.setPressed(false);
-                        header.invalidate();
-                    }
-                    final Handler handler = getHandler();
-                    if (handler != null) {
-                        handler.removeCallbacks(mPendingCheckForLongPress);
-                    }
-                    mMotionHeaderPosition = NO_MATCHED_HEADER;
-                    // }
-                }
-                break;
-            case MotionEvent.ACTION_UP:
-                if (mTouchMode == TOUCH_MODE_FINISHED_LONG_PRESS) {
-                    mTouchMode = TOUCH_MODE_REST;
-                    return true;
-                }
-                if (mTouchMode == TOUCH_MODE_REST || mMotionHeaderPosition == NO_MATCHED_HEADER) {
-                    break;
-                }
-
-                final View header = getHeaderAt(mMotionHeaderPosition);
-                if (!wasHeaderChildBeingPressed) {
-                    if (header != null) {
-                        if (mTouchMode != TOUCH_MODE_DOWN) {
-                            header.setPressed(false);
-                        }
-
-                        if (mPerformHeaderClick == null) {
-                            mPerformHeaderClick = new PerformHeaderClick();
-                        }
-
-                        final PerformHeaderClick performHeaderClick = mPerformHeaderClick;
-                        performHeaderClick.mClickMotionPosition = mMotionHeaderPosition;
-                        performHeaderClick.rememberWindowAttachCount();
-
-                        if (mTouchMode == TOUCH_MODE_DOWN || mTouchMode == TOUCH_MODE_TAP) {
-                            final Handler handler = getHandler();
-                            if (handler != null) {
-                                handler.removeCallbacks(mTouchMode == TOUCH_MODE_DOWN ? mPendingCheckForTap
-                                        : mPendingCheckForLongPress);
-                            }
-
-                            if (!mDataChanged) {
-                                /*
-                                 * Got here so must be a tap. The long press
-                                 * would have triggered on the callback handler.
-                                 */
-                                mTouchMode = TOUCH_MODE_TAP;
-                                header.setPressed(true);
-                                setPressed(true);
-                                if (mTouchModeReset != null) {
-                                    removeCallbacks(mTouchModeReset);
-                                }
-                                mTouchModeReset = new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        mMotionHeaderPosition = NO_MATCHED_HEADER;
-                                        mTouchModeReset = null;
-                                        mTouchMode = TOUCH_MODE_REST;
-                                        header.setPressed(false);
-                                        setPressed(false);
-                                        header.invalidate();
-                                        invalidate(0, header.getTop(), getWidth(),
-                                                header.getHeight());
-                                        if (!mDataChanged) {
-                                            performHeaderClick.run();
-                                        }
-                                    }
-                                };
-                                postDelayed(mTouchModeReset,
-                                        ViewConfiguration.getPressedStateDuration());
-                            } else {
-                                mTouchMode = TOUCH_MODE_REST;
-                            }
-                        } else if (!mDataChanged) {
-                            performHeaderClick.run();
-                        }
-                    }
-                }
-                mTouchMode = TOUCH_MODE_REST;
-                return true;
+        if (action == MotionEvent.ACTION_UP) {
+            mMotionHeaderPosition = NO_MATCHED_HEADER;
         }
+
         return super.onTouchEvent(ev);
-    }
-
-    public boolean performHeaderClick(View view, long id) {
-        if (mOnHeaderClickListener != null) {
-            playSoundEffect(SoundEffectConstants.CLICK);
-            if (view != null) {
-                view.sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_CLICKED);
-            }
-            mOnHeaderClickListener.onHeaderClick(this, view, id);
-            return true;
-        }
-
-        return false;
-    }
-
-    public boolean performHeaderLongPress(View view, long id) {
-        boolean handled = false;
-        if (mOnHeaderLongClickListener != null) {
-            handled = mOnHeaderLongClickListener.onHeaderLongClick(this, view, id);
-        }
-
-        if (handled) {
-            if (view != null) {
-                view.sendAccessibilityEvent(AccessibilityEvent.TYPE_VIEW_LONG_CLICKED);
-            }
-            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
-        }
-
-        return handled;
     }
 
     @Override
@@ -545,17 +376,6 @@ public class StickyGridHeadersGridView extends GridView implements OnScrollListe
         if (numColumns != AUTO_FIT && mAdapter != null) {
             mAdapter.setNumColumns(numColumns);
         }
-    }
-
-    public void setOnHeaderClickListener(OnHeaderClickListener listener) {
-        mOnHeaderClickListener = listener;
-    }
-
-    public void setOnHeaderLongClickListener(OnHeaderLongClickListener listener) {
-        if (!isLongClickable()) {
-            setLongClickable(true);
-        }
-        mOnHeaderLongClickListener = listener;
     }
 
     @Override
@@ -1078,100 +898,6 @@ public class StickyGridHeadersGridView extends GridView implements OnScrollListe
 
     public interface OnHeaderLongClickListener {
         boolean onHeaderLongClick(AdapterView<?> parent, View view, long id);
-    }
-
-    private class CheckForHeaderLongPress extends WindowRunnable implements Runnable {
-        @Override
-        public void run() {
-            final View child = getHeaderAt(mMotionHeaderPosition);
-            if (child != null) {
-                final long longPressId = headerViewPositionToId(mMotionHeaderPosition);
-
-                boolean handled = false;
-                if (sameWindow() && !mDataChanged) {
-                    handled = performHeaderLongPress(child, longPressId);
-                }
-                if (handled) {
-                    mTouchMode = TOUCH_MODE_FINISHED_LONG_PRESS;
-                    setPressed(false);
-                    child.setPressed(false);
-                } else {
-                    mTouchMode = TOUCH_MODE_DONE_WAITING;
-                }
-            }
-        }
-    }
-
-    private class PerformHeaderClick extends WindowRunnable implements Runnable {
-        int mClickMotionPosition;
-
-        @Override
-        public void run() {
-            // The data has changed since we posted this action to the event
-            // queue, bail out before bad things happen.
-            if (mDataChanged)
-                return;
-
-            if (mAdapter != null && mAdapter.getCount() > 0
-                    && mClickMotionPosition != INVALID_POSITION
-                    && mClickMotionPosition < mAdapter.getCount() && sameWindow()) {
-                final View view = getHeaderAt(mClickMotionPosition);
-                // If there is no view then something bad happened, the view
-                // probably scrolled off the screen, and we should cancel the
-                // click.
-                if (view != null) {
-                    performHeaderClick(view, headerViewPositionToId(mClickMotionPosition));
-                }
-            }
-        }
-    }
-
-    /**
-     * A base class for Runnables that will check that their view is still
-     * attached to the original window as when the Runnable was created.
-     */
-    private class WindowRunnable {
-        private int mOriginalAttachCount;
-
-        public void rememberWindowAttachCount() {
-            mOriginalAttachCount = getWindowAttachCount();
-        }
-
-        public boolean sameWindow() {
-            return hasWindowFocus() && getWindowAttachCount() == mOriginalAttachCount;
-        }
-    }
-
-    final class CheckForHeaderTap implements Runnable {
-        @Override
-        public void run() {
-            if (mTouchMode == TOUCH_MODE_DOWN) {
-                mTouchMode = TOUCH_MODE_TAP;
-                final View header = getHeaderAt(mMotionHeaderPosition);
-                if (header != null && !mHeaderChildBeingPressed) {
-                    if (!mDataChanged) {
-                        header.setPressed(true);
-                        setPressed(true);
-                        refreshDrawableState();
-
-                        final int longPressTimeout = ViewConfiguration.getLongPressTimeout();
-                        final boolean longClickable = isLongClickable();
-
-                        if (longClickable) {
-                            if (mPendingCheckForLongPress == null) {
-                                mPendingCheckForLongPress = new CheckForHeaderLongPress();
-                            }
-                            mPendingCheckForLongPress.rememberWindowAttachCount();
-                            postDelayed(mPendingCheckForLongPress, longPressTimeout);
-                        } else {
-                            mTouchMode = TOUCH_MODE_DONE_WAITING;
-                        }
-                    } else {
-                        mTouchMode = TOUCH_MODE_DONE_WAITING;
-                    }
-                }
-            }
-        }
     }
 
     class RuntimePlatformSupportException extends RuntimeException {
