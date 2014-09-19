@@ -294,7 +294,6 @@ public class StickyGridHeadersGridView extends GridView implements OnScrollListe
             View tempHeader = getHeaderAt(mMotionHeaderPosition);
             if (tempHeader != null) {
                 tempHeader.dispatchTouchEvent(transformEvent(ev, mMotionHeaderPosition));
-                tempHeader.invalidate();
             }
         }
 
